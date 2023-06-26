@@ -9,21 +9,9 @@ const storage = multer.diskStorage({
     cb(null, "uploads");
   },
   filename: async function (req, file, cb) {
-    console.log("Hello : Request Inside Multer : ->");
-    console.log(req);
-    console.log("Hello File: ", file);
-    let checkStudent;
-   
-    console.log("Body: ", req.body);
-    const {studentToken} = await req.body;
-    let data = jwt.verify(studentToken, `${process.env.JWT_SECRET}`);
-
-    const studentId = data._id;
-    // console.log(studentId);
-    checkStudent = await Student.findOne({ _id: studentId });
     
 
-    cb(null, (checkStudent ? (checkStudent.email ? checkStudent.email.slice(0, 11).toUpperCase() : "") : "" ) + "_" + file.originalname);
+    cb(null, Math.random(0,1000).toString() + file.originalname);
   },
 });
 

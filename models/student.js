@@ -17,7 +17,9 @@ const studentSchema = new mongoose.Schema({
   hostelNo: { type: Number },
   hostelName: {type: String},
   block: { type: String },
-  floorNo: {type: Number}
+  floorNo: { type: Number },
+  remarks: { type: String },
+  fileURL : {type: String}
 });
 
 module.exports = mongoose.model("Student", studentSchema);

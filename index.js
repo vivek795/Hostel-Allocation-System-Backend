@@ -1,8 +1,11 @@
 // create backend server
 
 const express = require('express');
+const fs = require('fs');
 const app = express();
 const mongoSanitize = require("express-mongo-sanitize");
+const path = require("node:path");
+const dirname = path.resolve();
 
 const cors = require('cors');
 
@@ -28,6 +31,22 @@ app.use(
     allowDots: true,
   })
 );
+
+// app.use("/uploads/:file", async(req, res) => {
+//   const file = req.params.file;
+//   try{
+//     const fileObject = fs.readFileSync(`./uploads/${file}`);
+//     return res.send(fileObject);
+//   }
+//   catch(error){
+//     console.log(error);
+//     return res.status(404);
+//   }
+
+// });
+
+
+app.use("/uploads", express.static(path.join(dirname, "/uploads")));
 
 
 // connect to server

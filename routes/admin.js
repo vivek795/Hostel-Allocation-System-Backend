@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router({ mergeParams: true, caseSensitive: true });
 const { body, validationResult } = require("express-validator");
-const { upload, removeFile } = require("../multer/index.js");
+const { upload, removeFile } = require("../multer/adminMulter.js");
 
 let parser = require("simple-excel-to-json");
 const ExcelJS = require('exceljs');
@@ -10,6 +10,7 @@ const Hostel = require("../models/hostel");
 const Room = require("../models/room");
 const Floor = require("../models/floor");
 const Block = require("../models/block");
+const EmailVerify = require("../models/emailVerify");
 const AcceptingRes = require("../models/acceptingRes.js");
 const { sendMail } = require("../mailer");
 
@@ -23,34 +24,135 @@ const crypto = require("crypto");
 const student = require("../models/student");
 const { monitorEventLoopDelay } = require("perf_hooks");
 
-router.post("/adminlogin", async (req, res) => {
-  try {
-    let { email, password } = req.body;
-    if (
-      email === process.env.ADMIN_EMAIL &&
-      password === process.env.ADMIN_PASSWORD
-    ) {
-      let adminToken = jwt.sign({ email: email }, process.env.JWT_SECRET, {
-        expiresIn: 30 * 60,
-      });
+// router.post("/adminlogin", async (req, res) => {
+//   try {
+//     let { email, password } = req.body;
+//     if (
+//       email === process.env.ADMIN_EMAIL &&
+//       password === process.env.ADMIN_PASSWORD
+//     ) {
+//       let adminToken = jwt.sign({ email: email }, process.env.JWT_SECRET, {
+//         expiresIn: 30 * 60,
+//       });
 
-      let value = {
-        success: true,
-        message: "Admin Logged In",
-        adminToken: adminToken,
-        email: email.toLowerCase(),
+//       let value = {
+//         success: true,
+//         message: "Admin Logged In",
+//         adminToken: adminToken,
+//         email: email.toLowerCase(),
+//       };
+//       const encryptedObject = CryptoJS.AES.encrypt(
+//         JSON.stringify(value),
+//         process.env.MASTER_KEY
+//       ).toString();
+//       return res.status(200).json({ adminToken: adminToken });
+//     } else {
+//       return res.status(400).json({ message: "Incorrect email or password" });
+//     }
+//   } catch (err) {
+//     console.log(err);
+//     res.status(500).json({ error: "Internal Server Error" });
+//   }
+// });
+
+router.post(
+  "/adminOtpLogin",
+  [
+    body("email", "Please enter correct email address!")
+      .isLength({ min: 3 })
+      .isEmail(),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(403).json({ errors: errors.array() });
+    }
+    try {
+      let { email, password } = req.body;
+      let otp = Math.floor(100000 + Math.random() * 900000);
+      // let otp = Math.ceil(Math.random() * Math.pow(10, 7));
+      // let stud = await Student.findOne({ email: email.toLowerCase() });
+      // if (!stud) return res.status(400).json({ message: "Student not found" });
+
+      console.log(email);
+
+      if (email !== process.env.ADMIN_EMAIL || password !== process.env.ADMIN_PASSWORD) {
+        return res.status(400).json({error : "Access Denied"});
+      }
+
+      const msg = {
+        to: email,
+        subject: "Your otp for login",
+        text: `Your otp for signing in on Hostel Allocation System is ${otp}`,
+        html: `<strong>Your otp for signing in on Hostel Allocation System is ${otp}</strong>`,
       };
-      const encryptedObject = CryptoJS.AES.encrypt(
-        JSON.stringify(value),
-        process.env.MASTER_KEY
-      ).toString();
+
+      if (sendMail(msg)) {
+        let verify = await EmailVerify.findOne({
+          email: email.toLowerCase(),
+        });
+        if (verify) {
+          verify.otp = otp;
+          verify.isVerify = false;
+          verify = await verify.save();
+        } else {
+          verify = await EmailVerify({
+            email: email.toLowerCase(),
+            otp: otp,
+            isVerify: false,
+          }).save();
+        }
+
+
+        let value = {
+          success: true,
+          email: email.toLowerCase(),
+        };
+        
+        return res.status(200).json(value);
+      } else {
+        return res
+          .status(400)
+          .json({ error: "Incorrect information provided" });
+      }
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+
+
+router.post("/otpVerify", async (req, res) => {
+  try {
+    let { email, otp } = req.body;
+
+    let verify = await EmailVerify.findOne({ email: email.toLowerCase() });
+    if (!verify) {
+      return res.status(400).json({ message: "Email not found" });
+    }
+    // console.log("OTPS",verify.otp, otp);
+    if (verify.otp == otp) {
+      verify.isVerify = true;
+      verify = await verify.save();
+      email = email.toLowerCase();
+      const adminToken = jwt.sign(
+        {
+          email: email,
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: 30 * 60 }
+      );
+     
       return res.status(200).json({ adminToken: adminToken });
+      // return res.status(200).json(value);
     } else {
-      return res.status(400).json({ message: "Incorrect email or password" });
+      return res.status(400).json({ message: "Incorrect OTP" });
     }
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "Internal Server Error" });
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
@@ -77,7 +179,7 @@ router.post("/getDetails", async (req,res) => {
           }
 
           const acceptingRes = await AcceptingRes.find();
-          res.status(200).json({isAccepting: acceptingRes.isAccepting});
+          res.status(200).json({isAccepting: acceptingRes[0].isAccepting});
 
         } catch (e) {
           console.log(e);
@@ -165,7 +267,7 @@ router.post(
 
         for (let i = 0; i < doc.length; ++i) {
           let entry = doc[i];
-          const email = entry.StudentID.toLowerCase() + "@mnit.ac.in";
+          const email = (entry.StudentID ? entry.StudentID.toLowerCase() : "" )+ "@mnit.ac.in";
           let isVerifyExists = await Student.findOne({
             email: email,
           });
@@ -388,6 +490,10 @@ router.post(
 );
 
 // show requests and transactinons and student with room list with the route
+
+/// transaction ka
+// view file
+
 router.post("/showRequests", async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -432,6 +538,9 @@ router.post("/showRequests", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
+
 
 // to upload the list of students who have submitted there payments.
 router.post(
@@ -579,6 +688,12 @@ router.post("/unlockroom", async (req, res) => {
 
     if (!adminToken) {
       return res.status(400).json({ error: "Access Denied" });
+    }
+    let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+    adminId = data.email;
+
+    if (!adminId||adminId !== process.env.ADMIN_EMAIL) {
+      return res.status(400).json({ error: "Access denied" });
     }
 
     if (!studentArray) {
@@ -798,6 +913,312 @@ router.post("/acceptingResponses", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
+router.post("/chooseRoomHostel", async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(403).json({ errors: errors.array() });
+  }
+  try {
+    const { adminToken, studentId } = req.body;
+    
+     if (!adminToken) {
+      return res.status(400).json({ error: "Access Denied" });
+    }
+
+    if(!studentId){
+      return res.status(400).json({error : "Invalid Student Id"});
+    }
+    
+    try {
+      let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+      adminId = data.email;
+
+      if (!adminId||adminId !== process.env.ADMIN_EMAIL) {
+        return res.status(400).json({ error: "Access denied" });
+      }
+      const email = studentId.toLowerCase() + "@mnit.ac.in";
+
+      const checkStudent = await Student.findOne({email : email});
+
+      if(!checkStudent){
+        res.status(400).json({error : "Student not Found!"});
+      }
+
+      const hostel = await Hostel.find({branch: checkStudent.branch , year : checkStudent.year});
+      // console.log(hostel);
+      if (hostel) {
+        const encryptedObject = CryptoJS.AES.encrypt(
+          JSON.stringify(hostel),
+          process.env.MASTER_KEY
+        ).toString();
+        return res.status(200).json(encryptedObject);
+      } else {
+        return res.status(400).json({ error: "No Hostel Found" });
+      }
+    }
+    catch (err) {
+      console.log(err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+    catch(err)
+    {
+      console.log(err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// choose room route for student.
+router.post("/chooseRoomBlock", async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(403).json({ errors: errors.array() });
+  }
+
+  try {
+    let { adminToken, hostelId } = req.body;
+
+    if (!adminToken) {
+      return res.status(400).json({ error: "Access denied" });
+    } else {
+      
+      let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+      adminId = data.email;
+
+      if (!adminId || adminId !== process.env.ADMIN_EMAIL) {
+        return res.status(400).json({ error: "Access denied" });
+      }
+      let checkHostel;
+
+      try {
+        // Admin token check
+        if (hostelId == null|| hostelId === "") {
+          return res.status(400).json({ error: "Hostel Id required!" });
+        }
+        
+        // console.log(studentId);
+        // checkStudent = await Student.findOne({ _id: studentId });
+        checkHostel = await Hostel.find({ _id: hostelId });
+        // console.log(checkStudent);
+
+        if (!checkHostel) {
+          return res.status(400).json({ error: "Access denied" });
+        }
+      } catch (e) {
+        console.log(e);
+        return res.status(400).json({ error: "Access denied" });
+      }
+
+      let block = await Block.find({ hostelId: hostelId });
+      if (block) {
+        const encryptedObject = CryptoJS.AES.encrypt(
+          JSON.stringify(block),
+          process.env.MASTER_KEY
+        ).toString();
+        return res.status(200).json(encryptedObject);
+      } else {
+        return res.status(400).json({ error: "No Block Found" });
+      }
+    }
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// choosing the room floor by student token and block id
+
+router.post("/chooseRoomFloor", async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(403).json({ errors: errors.array() });
+  }
+
+  try {
+    let { adminToken, blockId } = req.body;
+
+    if (!adminToken) {
+      return res.status(400).json({ error: "Access denied" });
+    } else {
+      let checkBlock;
+      let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+      adminId = data.email;
+
+      if (!adminId||adminId !== process.env.ADMIN_EMAIL) {
+        return res.status(400).json({ error: "Access denied" });
+      }
+      try {
+        // Admin token check
+        if (blockId == null||blockId === "") {
+          return res.status(400).json({ error: "Block Id required!" });
+        }
+        
+        checkBlock = await Block.find({ _id: blockId });
+        // console.log(checkStudent);
+
+        if (!checkBlock) {
+          return res.status(400).json({ error: "Access denied" });
+        }
+      } catch (e) {
+        console.log(e);
+        return res.status(400).json({ error: "Access denied" });
+      }
+
+      // find availaible block for this student and corresponding hostelId.
+      let floor = await Floor.find({ blockId: blockId });
+      // console.log(checkStudent);
+      console.log(floor);
+
+      if (floor) {
+        const encryptedObject = CryptoJS.AES.encrypt(
+          JSON.stringify(floor),
+          process.env.MASTER_KEY
+        ).toString();
+        return res.status(200).json(encryptedObject);
+      } else {
+        return res.status(400).json({ error: "No Floor Found" });
+      }
+    }
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
+
+// this is the route for choosing the room for a partiuclar.
+router.post("/chooseRoom", async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(403).json({ errors: errors.array() });
+  }
+
+  try {
+    let {adminToken, floorId } = req.body;
+
+    if (!adminToken) {
+      return res.status(400).json({ error: "Access denied" });
+    } else {
+      let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+      adminId = data.email;
+
+      if (!adminId||adminId !== process.env.ADMIN_EMAIL) {
+        return res.status(400).json({ error: "Access denied" });
+      }
+      let checkFloor;
+
+      try {
+        // Admin token check
+        if (floorId == null || floorId ==="") {
+          return res.status(400).json({ error: "Floor Id required!" });
+        }
+       
+        checkFloor = await Floor.find({ _id: floorId });
+        // console.log(checkStudent);
+
+        if (!checkFloor) {
+          return res.status(400).json({ error: "Access denied" });
+        }
+      } catch (e) {
+        console.log(e);
+        return res.status(400).json({ error: "Access denied" });
+      }
+
+
+      let room = await Room.find({ floorId: floorId , tempLocked : false, permanentLocked : false});
+      console.log(room);
+
+      if (room) {
+        const encryptedObject = CryptoJS.AES.encrypt(
+          JSON.stringify(room),
+          process.env.MASTER_KEY
+        ).toString();
+        return res.status(200).json(encryptedObject);
+      } else {
+        return res.status(400).json({ error: "No Room Found" });
+      }
+    }
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
+
+
+// new section for students doing personal requests to admin.
+router.post("/selfAddStudent", async(req,res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(403).json({ errors: errors.array() });
+  }
+  try{
+    const {adminToken, studentMailId , roomId, transactionId } = req.body;
+    
+    if (!adminToken) {
+      return res.status(400).json({ error: "Access Denied" });
+    }
+    let data = jwt.verify(adminToken, `${process.env.JWT_SECRET}`);
+    adminId = data.email;
+
+    if (!adminId||adminId !== process.env.ADMIN_EMAIL) {
+      return res.status(400).json({ error: "Access denied" });
+    }
+    if (!studentMailId) {
+      return res.status(400).json({ error: "Enter a valid Student Id" });
+    }
+    // if (studentMailId.length === 11 )
+    // {
+    //   console.log("Mail ID",studentMailId);
+    //   return res.status(400).json({ error: "Enter a valid student id" });  
+    // }  
+
+    if(transactionId !== "0987654321" ){
+      return res.status(400).json({ error: "Enter a valid TransactionId" });  
+    }
+    
+
+    const email = studentMailId ? (studentMailId.toLowerCase() + "@mnit.ac.in"): "";
+    
+    const checkStudent = await Student.findOne({ email: email });
+    if(!checkStudent)
+    {
+      return res.status(400).json({ error: "Student not found" });
+    }
+    const room = await Room.findOne({_id : roomId});
+    const floor = await Floor.findOne({_id : room.floorId});
+    const block = await Block.findOne({_id : floor.blockId});
+    const hostel = await Hostel.findOne({_id: block.hostelId});
+    
+    const studentUpdateData = await Student.findOneAndUpdate(
+      {_id : checkStudent._id},
+      {
+        tempLocked: true,
+        permanentLocked : false,
+        transactionId : transactionId,
+        roomId : roomId,
+        roomNo : room.roomNo,
+        floorNo : floor.floorNo,
+        block : block.block,
+        hostelNo : hostel.hostelNo,
+        hostelName : hostel.hostelName
+      },
+      {new : true}
+    );
+
+    console.log(studentUpdateData);
+
+    res.status(200).json("Room Temporarily Locked!");
+  } catch (e) {
+    console.log(e);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 
 
 module.exports = router;

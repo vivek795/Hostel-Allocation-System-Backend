@@ -15,6 +15,10 @@ const AcceptingRes = require("../models/acceptingRes.js");
 const { sendMail } = require("../mailer");
 // student login and otp verification
 
+// import fs moudle
+
+const fs = require("fs");
+const path = require("path");
 let CryptoJS = require("crypto-js");
 var jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -598,7 +602,162 @@ router.post(
   }),
 
   async (req, res, next) => {
+    
+    // console.log("Multer request:", req);
+
+    if (req.files && req.files.length !== 0) {
+      req.files.forEach(function (file) {
+        file.path = `${process.env.HOSTEL_WEBSITE_URL}/${file.path}`;
+      });
+    }
+    
+    next();
+  },
+  async (req, res) => {
+    // const session = await mongoose.startSession();
+    // session.startTransaction();
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(403).json({ errors: errors.array() });
+    }
+    
+    try {
+      let { studentToken, transactionId, roomId, remarks } = req.body;
+      console.log("room id", req.body);
+      if (!studentToken) {
+        if (req.files) {
+          for (let file of req.files) await removeFile(file.filename);
+        }
+
+        
+        return res.status(400).json({ error: "Access denied" });
+      } else if (!roomId) {
+        if (req.files) {
+          for (let file of req.files) await removeFile(file.filename);
+        }
+        return res.status(400).json({ error: "RoomId Invalid!" });
+      } else if (!transactionId) {
+        if (req.files) {
+          for (let file of req.files) await removeFile(file.filename);
+        }
+        return res.status(400).json({ error: "TransactionId Invalid!" });
+      } else {
+        let checkStudent, checkRoom;
+
+        try {
+          // Admin token check
+          console.log(studentToken)
+          let data = jwt.verify(studentToken, `${process.env.JWT_SECRET}`);
+          // console.log(data);
+          const studentId = data._id;
+          // console.log(studentId);
+          checkStudent = await Student.findOne({ _id: studentId });
+          // console.log(checkStudent);
+
+          checkRoom = await Room.findOne({ _id: roomId });
+          // console.log(checkStudent);
+          console.log(checkRoom);
+
+          if (!checkStudent || !checkRoom) {
+            if (req.files) {
+              for (let file of req.files) await removeFile(file.filename);
+            }
+
+            
+            return res.status(400).json({ error: "Access denied" });
+          } else if (
+            checkRoom.tempLocked === true ||
+            checkRoom.permanentLocked === true
+          ) {
+            if (req.files) {
+              for (let file of req.files) await removeFile(file.filename);
+            }
+
+            return res.status(400).json({ error: "Room already Taken" });
+          } else {
+            // checkRoom.tempLocked = true;
+            // checkRoom.permanentLocked = false;
+            // checkRoom.transactionId = transactionId;
+            // checkRoom.save();
+            console.log(
+              "room id",
+              roomId,
+              " templocked: ",
+              checkRoom.tempLocked
+            );
+            // create an update statement to update operation of room
+            const updateRoom = {
+              tempLocked: true,
+              permanentLocked: false
+            };
+            // console.log(updateRoom);
+            // console.log(roomId);
+
+            // update the room
+            const updateRoomData = await Room.findOneAndUpdate(
+              { _id: roomId },
+              updateRoom,
+              { new: true }
+            );
+
+            const filePathArray = req.files.map(file => file.path);
+            const filePath = filePathArray[0];
+            
+            
+            const floor = await Floor.findOne({ _id: updateRoomData.floorId });
+            const blockk = await Block.findOne({ _id: floor.blockId });
+            const hostel = await Hostel.findOne({ _id: blockk.hostelId });
+            
+            const studentUpdateData = await Student.findOneAndUpdate(
+              {_id : studentId},
+              {
+                roomId: roomId, tempLocked: true, transactionId: transactionId, permanentLocked: false, roomNo: updateRoomData.roomNo,
+                hostelNo: hostel.hostelNo, hostelName: hostel.hostelName, block: blockk.block, floorNo: floor.floorNo,
+                fileURL : filePath, remarks: remarks
+              }
+              ,{new : true}
+            );
+
+            console.log("Room Updated : ",updateRoomData);
+            console.log("Student Updated : " ,studentUpdateData)
+
+            // await session.commitTransaction();
+            return res.status(200).json({ message: "Room Temporarily Locked" });
+          }
+        } catch (e) {
+          if (req.files) {
+            for (let file of req.files) await removeFile(file.filename);
+          }
+          // await session.abortTransaction();
+
+          console.log(e);
+          return res.status(400).json({ error: "Access denied" });
+        }
+      }
+    } catch (e) {
+      console.log(e);
+      // await session.abortTransaction();
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+);
+
+
+// for the student who haven't uplaoded the fee reciept! and has the family condition
+
+router.post("/specialCase",upload.array("attachments", (error, result) => {
+    if (error) {
+      console.log(error);
+      res.status(400).json({ error: "Unable to upload" });
+    }
+  }),
+
+  async (req, res, next) => {
     // we are saving the files in the backend
+    // idhar karde 
+    // console.log("Multer request:", req);
+
+    // req.body.originalname =  
     if (req.files && req.files.length !== 0) {
       req.files.forEach(function (file) {
         file.path = `${process.env.HOSTEL_WEBSITE_URL}/${file.path}`;
@@ -615,7 +774,7 @@ router.post(
     }
 
     try {
-      let { studentToken, transactionId, roomId } = req.body;
+      let { studentToken, transactionId, roomId, reason } = req.body;
       console.log("room id", req.body)
       if (!studentToken) {
         if (req.files) {
@@ -679,7 +838,8 @@ router.post(
             // create an update statement to update operation of room
             const updateRoom = {
               tempLocked: true,
-              permanentLocked: false
+              permanentLocked: false,
+              feeDeposited: false
             };
             // console.log(updateRoom);
             // console.log(roomId);
@@ -698,7 +858,7 @@ router.post(
               {_id : studentId},
               {
                 roomId: roomId, tempLocked: true, transactionId: transactionId, permanentLocked: false, roomNo: updateRoomData.roomNo,
-                hostelNo: hostel.hostelNo, hostelName: hostel.hostelName, block: blockk.block, floorNo: floor.floorNo
+                hostelNo: hostel.hostelNo, hostelName: hostel.hostelName, block: blockk.block, floorNo: floor.floorNo, reason: reason, feeDeposited: false
               }
               ,{new : true}
             );
